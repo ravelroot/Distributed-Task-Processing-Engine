@@ -1,0 +1,64 @@
+@if (Workers.Count == 0)
+{
+    <div class="empty">
+        <p><strong>Nenhum worker online.</strong></p>
+        <p class="muted">Suba ao menos uma instância de <code>Turno.Worker</code>. Com Docker: <code>docker compose up -d --scale worker=3</code>.</p>
+    </div>
+}
+else
+{
+    <ol class="board" aria-label="Workers e vagas de execução">
+        @foreach (var worker in Workers)
+        {
+            var jobs = RunningFor(worker.Id);
+            var slots = Math.Max(worker.Concurrency, jobs.Count);
+            var visible = Math.Min(slots, MaxSlots);
+            <li class="lane" @key="worker.Id">
+                <div class="lane-head">
+                    <span class="badge badge-@Format.WorkerClass(worker.Status)"><span class="badge-dot" aria-hidden="true"></span>@Format.Worker(worker.Status)</span>
+                    <span class="lane-name" title="@worker.Id">@worker.Id</span>
+                    <span class="lane-meta">@string.Join(", ", worker.Queues)</span>
+                    <span class="lane-load"><strong>@jobs.Count</strong> de @worker.Concurrency vagas</span>
+                </div>
+                <div class="slots" style="--slots: @Math.Min(visible, 8)">
+                    @for (var i = 0; i < visible; i++)
+                    {
+                        if (i < jobs.Count)
+                        {
+                            var job = jobs[i];
+                            <a class="slot slot-busy" href="tarefas?id=@job.Id" title="@job.Type, @Format.ShortId(job.Id)" @key="job.Id">
+                                <span class="slot-type">@Format.Breakable(job.Type)</span>
+                                <span class="slot-meta"><span>@Format.Duration(job.StartedAt, null, Now)</span><span>@(job.Progress ?? 0)%</span></span>
+                                <ProgressBar Value="@(job.Progress ?? 0)" />
+                            </a>
+                        }
+                        else
+                        {
+                            <span class="slot slot-free" aria-label="Vaga livre">livre</span>
+                        }
+                    }
+                    @if (slots > MaxSlots)
+                    {
+                        <span class="slot slot-more">+@(slots - MaxSlots)</span>
+                    }
+                </div>
+            </li>
+        }
+    </ol>
+}
+
+@code {
+    private const int MaxSlots = 16;
+
+    [Parameter, EditorRequired]
+    public IReadOnlyList<WorkerDto> Workers { get; set; } = [];
+
+    [Parameter, EditorRequired]
+    public IReadOnlyList<JobSummary> Running { get; set; } = [];
+
+    [Parameter]
+    public DateTimeOffset Now { get; set; } = DateTimeOffset.UtcNow;
+
+    private List<JobSummary> RunningFor(string workerId) =>
+        Running.Where(j => j.WorkerId == workerId).OrderBy(j => j.StartedAt).ToList();
+}

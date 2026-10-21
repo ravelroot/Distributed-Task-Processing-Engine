@@ -1,0 +1,178 @@
+@page "/erros"
+@implements IDisposable
+@inject TurnoApi Api
+@inject Toasts ToastService
+@inject LiveConnection Live
+
+<PageTitle>Fila de erros | Turno</PageTitle>
+
+<header class="page-head">
+    <h1>Fila de erros</h1>
+    <div class="page-actions">
+        <div class="segmented" role="radiogroup" aria-label="Filtrar registros">
+            <label class="@(pendingOnly ? "on" : null)"><input type="radio" name="filter" checked="@pendingOnly" @onchange="() => SetFilterAsync(true)" />Pendentes</label>
+            <label class="@(!pendingOnly ? "on" : null)"><input type="radio" name="filter" checked="@(!pendingOnly)" @onchange="() => SetFilterAsync(false)" />Todos</label>
+        </div>
+    </div>
+</header>
+<p class="muted page-note">Tarefas que esgotaram as tentativas ou tiveram erro permanente. Cada registro também foi publicado na fila <code class="nowrap">turno-dead-letter</code> do broker.</p>
+
+@if (error is not null)
+{
+    <p class="field-error">@error</p>
+}
+
+<section class="panel flush">
+    @if (page is null)
+    {
+        <p class="muted pad">Carregando…</p>
+    }
+    else if (page.Items.Count == 0)
+    {
+        <div class="empty">
+            <p><strong>@(pendingOnly ? "Nada pendente na fila de erros." : "A fila de erros está vazia.")</strong></p>
+            <p class="muted">Quando uma tarefa esgotar as tentativas, ela aparece aqui com o erro e o stack trace.</p>
+        </div>
+    }
+    else
+    {
+        <div class="table-scroll">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Tarefa</th>
+                        <th>Tipo</th>
+                        <th>Erro</th>
+                        <th class="num">Tentativas</th>
+                        <th>Falhou</th>
+                        <th class="actions-col"><span class="visually-hidden">Ações</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in page.Items)
+                    {
+                        <tr @key="item.Id" class="@(item.RequeuedAt is not null ? "dimmed" : null)">
+                            <td><a class="mono" href="tarefas?id=@item.JobId">@Format.ShortId(item.JobId)</a><div class="muted small">@item.Queue</div></td>
+                            <td>@item.Type</td>
+                            <td class="cell-error">
+                                <button type="button" class="link-button" @onclick="() => Toggle(item.Id)" aria-expanded="@(expanded.Contains(item.Id) ? "true" : "false")">@(item.ErrorType ?? "Erro")</button>
+                                <div>@item.ErrorMessage</div>
+                            </td>
+                            <td class="num">@item.Attempts</td>
+                            <td title="@Format.FullDateTime(item.FailedAt)">@Format.Relative(item.FailedAt, now)@if (item.RequeuedAt is not null){<div class="muted small">reenfileirada @Format.Relative(item.RequeuedAt, now)</div>}</td>
+                            <td class="row-actions">
+                                @if (item.RequeuedAt is null)
+                                {
+                                    <button type="button" class="ghost small" disabled="@busy" @onclick="() => RequeueAsync(item)"><Icon Name="requeue" Size="14" />Reenfileirar</button>
+                                }
+                                <ConfirmButton Text="Descartar" ConfirmText="Confirmar" Icon="trash" Disabled="busy" OnConfirm="() => DiscardAsync(item)" />
+                            </td>
+                        </tr>
+                        @if (expanded.Contains(item.Id))
+                        {
+                            <tr class="row-detail">
+                                <td colspan="6"><pre class="code code-error">@(item.StackTrace ?? item.ErrorMessage ?? "Sem detalhes.")</pre></td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+        <Pager Page="page.Page" TotalPages="page.TotalPages" PageChanged="GoToPageAsync" />
+    }
+</section>
+
+@code {
+    private PagedResult<DeadLetterDto>? page;
+    private readonly HashSet<Guid> expanded = [];
+    private bool pendingOnly = true;
+    private bool busy;
+    private int current = 1;
+    private string? error;
+    private DateTimeOffset now = DateTimeOffset.UtcNow;
+    private Debouncer? reload;
+    private Timer? clock;
+
+    protected override async Task OnInitializedAsync()
+    {
+        reload = new Debouncer(TimeSpan.FromMilliseconds(1500), () => InvokeAsync(LoadAsync));
+        Live.JobsChanged += OnJobsChanged;
+        clock = new Timer(_ => InvokeAsync(() => { now = DateTimeOffset.UtcNow; StateHasChanged(); }), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            page = await Api.ListDeadLettersAsync(pendingOnly, current, 25);
+            error = null;
+        }
+        catch (ApiException ex)
+        {
+            error = ex.Message;
+        }
+
+        now = DateTimeOffset.UtcNow;
+        StateHasChanged();
+    }
+
+    private async Task SetFilterAsync(bool pending)
+    {
+        pendingOnly = pending;
+        current = 1;
+        await LoadAsync();
+    }
+
+    private async Task GoToPageAsync(int number)
+    {
+        current = Math.Max(1, number);
+        await LoadAsync();
+    }
+
+    private void Toggle(Guid id)
+    {
+        if (!expanded.Remove(id))
+        {
+            expanded.Add(id);
+        }
+    }
+
+    private Task RequeueAsync(DeadLetterDto item) => RunAsync(() => Api.RequeueDeadLetterAsync(item.Id));
+
+    private Task DiscardAsync(DeadLetterDto item) => RunAsync(() => Api.DiscardDeadLetterAsync(item.Id));
+
+    private async Task RunAsync(Func<Task<ActionResponse>> action)
+    {
+        busy = true;
+        try
+        {
+            var response = await action();
+            ToastService.Success(response.Message);
+            await LoadAsync();
+        }
+        catch (ApiException ex)
+        {
+            ToastService.Error(ex.Message);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void OnJobsChanged(IReadOnlyList<JobStatusChanged> changes)
+    {
+        if (changes.Any(c => c.State == JobState.Failed))
+        {
+            reload?.Trigger();
+        }
+    }
+
+    public void Dispose()
+    {
+        Live.JobsChanged -= OnJobsChanged;
+        reload?.Dispose();
+        clock?.Dispose();
+    }
+}

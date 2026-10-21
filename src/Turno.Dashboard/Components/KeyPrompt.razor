@@ -1,0 +1,28 @@
+@inject ApiKeyState Keys
+
+<div class="overlay">
+    <form class="dialog dialog-narrow" @onsubmit="Submit" aria-labelledby="key-title">
+        <div class="dialog-head">
+            <BrandMark Size="28" />
+            <h2 id="key-title">Chave de acesso</h2>
+        </div>
+        <p class="muted">Esta instalação exige a chave definida em <code>Turno:Api:ApiKey</code>. Ela fica só na memória desta aba.</p>
+        <label class="field">
+            <span>Chave</span>
+            <input type="password" autocomplete="current-password" @bind="value" @bind:event="oninput" autofocus />
+        </label>
+        @if (Keys.WasRejected)
+        {
+            <p class="field-error">Chave recusada. Confira o valor configurado no servidor.</p>
+        }
+        <div class="dialog-actions">
+            <button type="submit" class="primary" disabled="@string.IsNullOrWhiteSpace(value)">Entrar</button>
+        </div>
+    </form>
+</div>
+
+@code {
+    private string? value;
+
+    private void Submit() => Keys.SetKey(value);
+}

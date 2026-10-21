@@ -1,0 +1,134 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject ApiKeyState Keys
+@inject LiveConnection Live
+@inject TurnoApi Api
+@inject UiState Ui
+@inject IJSRuntime JS
+
+<div class="shell">
+    <aside class="sidebar">
+        <a class="brand" href="" aria-label="Turno, visão geral">
+            <BrandMark Size="26" />
+            <span class="brand-name">Turno</span>
+        </a>
+        <nav class="nav" aria-label="Seções do painel">
+            <NavLink class="nav-link" href="" Match="NavLinkMatch.All"><Icon Name="overview" />Visão geral</NavLink>
+            <NavLink class="nav-link" href="tarefas"><Icon Name="jobs" />Tarefas</NavLink>
+            <NavLink class="nav-link" href="recorrentes"><Icon Name="recurring" />Recorrentes</NavLink>
+            <NavLink class="nav-link" href="workers"><Icon Name="workers" />Workers</NavLink>
+            <NavLink class="nav-link" href="erros"><Icon Name="dead" />Fila de erros</NavLink>
+        </nav>
+        <div class="sidebar-foot">
+            <span class="live live-@Live.State.ToString().ToLowerInvariant()" role="status">
+                <span class="live-dot" aria-hidden="true"></span>@LiveLabel
+            </span>
+            <button type="button" class="ghost small" @onclick="ToggleThemeAsync">@(dark ? "Tema claro" : "Tema escuro")</button>
+            @if (info is not null)
+            {
+                <span class="foot-meta">Versão @info.Version, @info.Transport</span>
+            }
+        </div>
+    </aside>
+
+    <main class="main" id="conteudo">
+        @if (!Keys.Missing && loaded)
+        {
+            <div @key="session" class="page">
+                @Body
+            </div>
+        }
+        else if (failure is not null)
+        {
+            <div class="page">
+                <header class="page-head"><h1>API indisponível</h1></header>
+                <p class="muted">@failure</p>
+                <button type="button" class="primary" @onclick="LoadAsync">Tentar de novo</button>
+            </div>
+        }
+    </main>
+</div>
+
+<NewJobDialog />
+<ToastHost />
+@if (Keys.Missing)
+{
+    <KeyPrompt />
+}
+
+@code {
+    private ServerInfo? info;
+    private bool loaded;
+    private bool dark;
+    private int session;
+    private string? failure;
+
+    private string LiveLabel => Live.State switch
+    {
+        LiveState.Live => "Ao vivo",
+        LiveState.Reconnecting => "Reconectando",
+        LiveState.Connecting => "Conectando",
+        _ => "Sem conexão em tempo real"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        Keys.Changed += OnKeysChanged;
+        Live.StateChanged += OnLiveChanged;
+        Ui.Changed += OnLiveChanged;
+        await LoadAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            dark = await JS.InvokeAsync<bool>("turno.isDark");
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        failure = null;
+        try
+        {
+            info = await Api.GetInfoAsync();
+            Keys.SetRequired(info.ApiKeyRequired);
+            loaded = true;
+            if (!Keys.Missing)
+            {
+                await Live.StartAsync();
+            }
+        }
+        catch (HttpRequestException)
+        {
+            failure = "Não foi possível falar com a API do Turno. Confira se o serviço Turno.Api está rodando e acessível.";
+        }
+    }
+
+    private void OnKeysChanged()
+    {
+        if (!Keys.Missing)
+        {
+            session++;
+            _ = Live.StartAsync();
+        }
+
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnLiveChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task ToggleThemeAsync()
+    {
+        dark = await JS.InvokeAsync<bool>("turno.toggleTheme");
+    }
+
+    public void Dispose()
+    {
+        Keys.Changed -= OnKeysChanged;
+        Live.StateChanged -= OnLiveChanged;
+        Ui.Changed -= OnLiveChanged;
+    }
+}

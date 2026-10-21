@@ -1,0 +1,69 @@
+<figure class="chart">
+    <div class="chart-plot">
+        <span class="chart-max">@Format.Number(max)</span>
+        <svg viewBox="0 0 @Width @Height" preserveAspectRatio="none" role="img" aria-label="@Summary">
+            <line x1="0" y1="@(Height - 0.5)" x2="@Width" y2="@(Height - 0.5)" class="chart-axis" />
+            <line x1="0" y1="0.5" x2="@Width" y2="0.5" class="chart-grid" />
+            <line x1="0" y1="@(Height / 2.0)" x2="@Width" y2="@(Height / 2.0)" class="chart-grid" />
+            @for (var i = 0; i < Points.Count; i++)
+            {
+                var point = Points[i];
+                var x = i * slot + gap / 2;
+                var successHeight = Scale(point.Succeeded);
+                var failureHeight = Scale(point.Failed);
+                <g>
+                    <title>@point.Minute.ToLocalTime().ToString("HH:mm"): @point.Succeeded com sucesso, @point.Failed com falha</title>
+                    <rect x="@F(x)" y="@F(Height - successHeight)" width="@F(slot - gap)" height="@F(successHeight)" class="bar-success" />
+                    <rect x="@F(x)" y="@F(Height - successHeight - failureHeight)" width="@F(slot - gap)" height="@F(failureHeight)" class="bar-failure" />
+                </g>
+            }
+        </svg>
+    </div>
+    <figcaption class="chart-foot">
+        <span>@StartLabel</span>
+        <span class="chart-legend">
+            <span><span class="swatch swatch-success" aria-hidden="true"></span>Sucesso</span>
+            <span><span class="swatch swatch-failure" aria-hidden="true"></span>Falha</span>
+        </span>
+        <span>agora</span>
+    </figcaption>
+</figure>
+
+@code {
+    private const int Width = 600;
+    private const int Height = 140;
+    private const double gap = 2;
+    private double slot;
+    private int max;
+
+    [Parameter, EditorRequired]
+    public IReadOnlyList<ThroughputPoint> Points { get; set; } = [];
+
+    private string StartLabel => Points.Count > 0 ? $"há {Points.Count} min" : string.Empty;
+
+    private string Summary => $"Execuções por minuto na última hora: {Points.Sum(p => p.Succeeded)} com sucesso e {Points.Sum(p => p.Failed)} com falha.";
+
+    protected override void OnParametersSet()
+    {
+        slot = Points.Count == 0 ? Width : Width / (double)Points.Count;
+        var peak = Points.Count == 0 ? 0 : Points.Max(p => p.Succeeded + p.Failed);
+        max = Nice(peak);
+    }
+
+    private double Scale(int value) => max == 0 ? 0 : value / (double)max * (Height - 2);
+
+    private static string F(double value) => value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static int Nice(int value)
+    {
+        if (value <= 5)
+        {
+            return 5;
+        }
+
+        var magnitude = Math.Pow(10, Math.Floor(Math.Log10(value)));
+        var normalized = value / magnitude;
+        var step = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+        return (int)(step * magnitude);
+    }
+}

@@ -1,0 +1,102 @@
+name: turno
+
+x-turno-environment: &turno-environment
+  ConnectionStrings__Turno: Host=postgres;Port=5432;Database=${TURNO_POSTGRES_DB:-turno};Username=${TURNO_POSTGRES_USER:-turno};Password=${TURNO_POSTGRES_PASSWORD:?Defina TURNO_POSTGRES_PASSWORD no .env}
+  Turno__Messaging__Transport: RabbitMq
+  Turno__Messaging__RabbitMq__Host: rabbitmq
+  Turno__Messaging__RabbitMq__Username: ${TURNO_RABBITMQ_USER:-turno}
+  Turno__Messaging__RabbitMq__Password: ${TURNO_RABBITMQ_PASSWORD:?Defina TURNO_RABBITMQ_PASSWORD no .env}
+  Turno__Redis__Connections__0: redis:6379,password=${TURNO_REDIS_PASSWORD:?Defina TURNO_REDIS_PASSWORD no .env}
+  TZ: ${TZ:-America/Sao_Paulo}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${TURNO_POSTGRES_DB:-turno}
+      POSTGRES_USER: ${TURNO_POSTGRES_USER:-turno}
+      POSTGRES_PASSWORD: ${TURNO_POSTGRES_PASSWORD:?Defina TURNO_POSTGRES_PASSWORD no .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${TURNO_POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${TURNO_REDIS_PASSWORD:?Defina TURNO_REDIS_PASSWORD no .env}
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes"]
+    volumes:
+      - redis-data:/data
+    ports:
+      - "127.0.0.1:${TURNO_REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${TURNO_RABBITMQ_USER:-turno}
+      RABBITMQ_DEFAULT_PASS: ${TURNO_RABBITMQ_PASSWORD:?Defina TURNO_RABBITMQ_PASSWORD no .env}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    ports:
+      - "127.0.0.1:${TURNO_RABBITMQ_PORT:-5672}:5672"
+      - "127.0.0.1:${TURNO_RABBITMQ_UI_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      target: api
+    image: turno-api:local
+    restart: unless-stopped
+    environment:
+      <<: *turno-environment
+      Turno__Api__ApiKey: ${TURNO_API_KEY:-}
+      Turno__Database__ApplyMigrations: "true"
+    ports:
+      - "127.0.0.1:${TURNO_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      target: worker
+    image: turno-worker:local
+    restart: unless-stopped
+    environment:
+      <<: *turno-environment
+      Turno__Database__ApplyMigrations: "false"
+    deploy:
+      replicas: ${TURNO_WORKERS:-3}
+    stop_grace_period: 45s
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  redis-data:
+  rabbitmq-data:

@@ -1,0 +1,321 @@
+@page "/recorrentes"
+@implements IDisposable
+@using System.Text.Json
+@inject TurnoApi Api
+@inject Toasts ToastService
+@inject LiveConnection Live
+
+<PageTitle>Recorrentes | Turno</PageTitle>
+
+<header class="page-head">
+    <h1>Recorrentes</h1>
+    <div class="page-actions">
+        <button type="button" class="primary" @onclick="ToggleForm"><Icon Name="@(formOpen ? "close" : "plus")" Size="16" />@(formOpen ? "Fechar formulário" : "Novo agendamento")</button>
+    </div>
+</header>
+
+@if (formOpen)
+{
+    <form class="panel form-panel" @onsubmit="SaveAsync">
+        <div class="panel-head">
+            <h2>@(editing ? $"Editar {form.Name}" : "Novo agendamento")</h2>
+        </div>
+        <div class="grid-3">
+            <label class="field">
+                <span>Nome</span>
+                <input @bind="form.Name" placeholder="relatorio-diario" required disabled="@editing" />
+            </label>
+            <label class="field">
+                <span>Tipo da tarefa</span>
+                <input list="recurring-types" @bind="form.Type" placeholder="report.generate" required />
+                <datalist id="recurring-types">
+                    @foreach (var known in types)
+                    {
+                        <option value="@known"></option>
+                    }
+                </datalist>
+            </label>
+            <label class="field">
+                <span>Fila</span>
+                <input @bind="form.Queue" placeholder="default" />
+            </label>
+            <label class="field">
+                <span>Cron</span>
+                <input class="mono" @bind="form.Cron" placeholder="0 6 * * *" required />
+                <small class="muted">minuto hora dia mês dia-da-semana</small>
+            </label>
+            <label class="field">
+                <span>Fuso horário</span>
+                <input @bind="form.TimeZone" placeholder="America/Sao_Paulo" />
+            </label>
+            <label class="field checkbox">
+                <input type="checkbox" @bind="form.AllowConcurrent" />
+                <span>Permitir execuções sobrepostas</span>
+            </label>
+        </div>
+        <label class="field">
+            <span>Payload (JSON)</span>
+            <textarea rows="4" class="mono" spellcheck="false" @bind="form.Payload"></textarea>
+        </label>
+        @if (formError is not null)
+        {
+            <p class="field-error">@formError</p>
+        }
+        <div class="dialog-actions">
+            <button type="submit" class="primary" disabled="@busy">Salvar agendamento</button>
+        </div>
+    </form>
+}
+
+@if (error is not null)
+{
+    <p class="field-error">@error</p>
+}
+
+<section class="panel flush">
+    @if (items is null)
+    {
+        <p class="muted pad">Carregando agendamentos…</p>
+    }
+    else if (items.Count == 0)
+    {
+        <div class="empty">
+            <p><strong>Nenhum agendamento recorrente.</strong></p>
+            <p class="muted">Crie um aqui ou declare em <code>Turno:RecurringJobs</code> no appsettings do worker.</p>
+        </div>
+    }
+    else
+    {
+        <div class="table-scroll">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Nome</th>
+                        <th>Tipo</th>
+                        <th>Cron</th>
+                        <th>Próxima</th>
+                        <th>Última</th>
+                        <th>Situação</th>
+                        <th class="actions-col"><span class="visually-hidden">Ações</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in items)
+                    {
+                        <tr @key="item.Id" class="@(item.Enabled ? null : "dimmed")">
+                            <td class="nowrap"><strong>@item.Name</strong><div class="muted small">@item.Queue</div></td>
+                            <td>@item.Type</td>
+                            <td><span class="mono">@item.Cron</span><div class="muted small">@item.TimeZone</div></td>
+                            <td title="@Format.FullDateTime(item.NextRunAt)">@(item.Enabled ? Format.Relative(item.NextRunAt, now) : "pausado")</td>
+                            <td>
+                                @if (item.LastJobId is { } last)
+                                {
+                                    <a href="tarefas?id=@last" class="last-run">
+                                        @if (item.LastJobState is { } state)
+                                        {
+                                            <StateBadge State="state" />
+                                        }
+                                        <span class="muted small">@Format.Relative(item.LastRunAt, now)</span>
+                                    </a>
+                                }
+                                else
+                                {
+                                    <span class="muted">—</span>
+                                }
+                            </td>
+                            <td>
+                                <button type="button" class="switch @(item.Enabled ? "on" : null)" role="switch" aria-checked="@(item.Enabled ? "true" : "false")" aria-label="Ativar @item.Name" disabled="@busy" @onclick="() => ToggleAsync(item)">
+                                    <span class="switch-knob"></span>
+                                </button>
+                            </td>
+                            <td class="row-actions">
+                                <button type="button" class="ghost small" disabled="@busy" @onclick="() => TriggerAsync(item)"><Icon Name="play" Size="14" />Executar</button>
+                                <button type="button" class="ghost small" disabled="@busy" @onclick="() => Edit(item)">Editar</button>
+                                <ConfirmButton Text="Excluir" ConfirmText="Confirmar" Icon="trash" Disabled="busy" OnConfirm="() => DeleteAsync(item)" />
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
+
+@code {
+    private sealed class FormModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Type { get; set; } = string.Empty;
+        public string? Queue { get; set; }
+        public string Cron { get; set; } = string.Empty;
+        public string TimeZone { get; set; } = "America/Sao_Paulo";
+        public string? Payload { get; set; }
+        public bool AllowConcurrent { get; set; }
+        public bool Enabled { get; set; } = true;
+    }
+
+    private IReadOnlyList<RecurringJobDto>? items;
+    private IReadOnlyList<string> types = [];
+    private FormModel form = new();
+    private bool formOpen;
+    private bool editing;
+    private bool busy;
+    private string? error;
+    private string? formError;
+    private DateTimeOffset now = DateTimeOffset.UtcNow;
+    private Timer? clock;
+    private Debouncer? reload;
+
+    protected override async Task OnInitializedAsync()
+    {
+        reload = new Debouncer(TimeSpan.FromSeconds(2), () => InvokeAsync(LoadAsync));
+        Live.JobsChanged += OnJobsChanged;
+        clock = new Timer(_ => InvokeAsync(() => { now = DateTimeOffset.UtcNow; StateHasChanged(); }), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            items = await Api.ListRecurringAsync();
+            error = null;
+        }
+        catch (ApiException ex)
+        {
+            error = ex.Message;
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task ToggleForm()
+    {
+        formOpen = !formOpen;
+        editing = false;
+        form = new FormModel();
+        formError = null;
+        if (formOpen)
+        {
+            types = await SafeTypesAsync();
+        }
+    }
+
+    private async Task Edit(RecurringJobDto item)
+    {
+        form = new FormModel
+        {
+            Name = item.Name,
+            Type = item.Type,
+            Queue = item.Queue,
+            Cron = item.Cron,
+            TimeZone = item.TimeZone,
+            Payload = Format.PrettyJson(item.Payload),
+            AllowConcurrent = item.AllowConcurrent,
+            Enabled = item.Enabled
+        };
+        editing = true;
+        formOpen = true;
+        formError = null;
+        types = await SafeTypesAsync();
+    }
+
+    private async Task SaveAsync()
+    {
+        formError = null;
+        JsonElement? payload = null;
+        if (!string.IsNullOrWhiteSpace(form.Payload))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(form.Payload);
+                payload = document.RootElement.Clone();
+            }
+            catch (JsonException ex)
+            {
+                formError = $"O payload não é um JSON válido: {ex.Message}";
+                return;
+            }
+        }
+
+        busy = true;
+        try
+        {
+            var response = await Api.UpsertRecurringAsync(new UpsertRecurringJobRequest
+            {
+                Name = form.Name,
+                Type = form.Type,
+                Cron = form.Cron,
+                Queue = form.Queue,
+                TimeZone = form.TimeZone,
+                Payload = payload,
+                Enabled = form.Enabled,
+                AllowConcurrent = form.AllowConcurrent
+            });
+            ToastService.Success(response.Message);
+            formOpen = false;
+            editing = false;
+            await LoadAsync();
+        }
+        catch (ApiException ex)
+        {
+            formError = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private Task ToggleAsync(RecurringJobDto item) => RunAsync(() => Api.SetRecurringEnabledAsync(item.Id, !item.Enabled));
+
+    private Task TriggerAsync(RecurringJobDto item) => RunAsync(() => Api.TriggerRecurringAsync(item.Id));
+
+    private Task DeleteAsync(RecurringJobDto item) => RunAsync(() => Api.DeleteRecurringAsync(item.Id));
+
+    private async Task RunAsync(Func<Task<ActionResponse>> action)
+    {
+        busy = true;
+        try
+        {
+            var response = await action();
+            ToastService.Success(response.Message);
+            await LoadAsync();
+        }
+        catch (ApiException ex)
+        {
+            ToastService.Error(ex.Message);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task<IReadOnlyList<string>> SafeTypesAsync()
+    {
+        try
+        {
+            return await Api.ListJobTypesAsync();
+        }
+        catch (ApiException)
+        {
+            return [];
+        }
+    }
+
+    private void OnJobsChanged(IReadOnlyList<JobStatusChanged> changes)
+    {
+        if (items is not null && changes.Any(c => items.Any(i => i.LastJobId == c.JobId || i.Type == c.Type)))
+        {
+            reload?.Trigger();
+        }
+    }
+
+    public void Dispose()
+    {
+        Live.JobsChanged -= OnJobsChanged;
+        clock?.Dispose();
+        reload?.Dispose();
+    }
+}

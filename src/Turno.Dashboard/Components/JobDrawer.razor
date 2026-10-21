@@ -1,0 +1,265 @@
+@implements IDisposable
+@inject TurnoApi Api
+@inject LiveConnection Live
+@inject Toasts ToastService
+
+<div class="drawer-backdrop" @onclick="CloseAsync"></div>
+<aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" @onkeydown="OnKeyDown" tabindex="-1">
+    <header class="drawer-head">
+        <div>
+            <h2 id="drawer-title">@(details?.Job.Type ?? "Tarefa")</h2>
+            <p class="mono muted small">@JobId</p>
+        </div>
+        <button type="button" class="icon-button" aria-label="Fechar detalhes" @onclick="CloseAsync"><Icon Name="close" /></button>
+    </header>
+
+    @if (error is not null)
+    {
+        <p class="field-error">@error</p>
+    }
+    else if (details is null)
+    {
+        <p class="muted">Carregando…</p>
+    }
+    else
+    {
+        var job = details.Job;
+        <section class="drawer-section">
+            <div class="drawer-state">
+                <StateBadge State="job.State" />
+                @if (job.State == JobState.Processing)
+                {
+                    <ProgressBar Value="@(job.Progress ?? 0)" />
+                    <span class="muted small">@(job.Progress ?? 0)%</span>
+                }
+                @if (job.CancellationRequested && job.State == JobState.Processing)
+                {
+                    <span class="muted small">Cancelamento solicitado</span>
+                }
+            </div>
+            <div class="drawer-actions">
+                @if (job.State is JobState.Scheduled or JobState.Enqueued or JobState.Processing)
+                {
+                    <ConfirmButton Text="Cancelar" ConfirmText="Confirmar cancelamento" Icon="stop" Disabled="busy || job.CancellationRequested" OnConfirm="CancelAsync" />
+                }
+                @if (job.State is JobState.Failed or JobState.Cancelled)
+                {
+                    <button type="button" class="ghost small" disabled="@busy" @onclick="RequeueAsync"><Icon Name="requeue" Size="16" />Reenfileirar</button>
+                }
+                @if (job.State is JobState.Succeeded or JobState.Failed or JobState.Cancelled)
+                {
+                    <ConfirmButton Text="Excluir" ConfirmText="Confirmar exclusão" Icon="trash" Disabled="busy" OnConfirm="DeleteAsync" />
+                }
+            </div>
+        </section>
+
+        <dl class="facts">
+            <dt>Fila</dt><dd>@job.Queue</dd>
+            <dt>Tentativa</dt><dd>@job.Attempt de @job.MaxAttempts</dd>
+            <dt>Worker</dt><dd class="mono">@(job.WorkerId ?? "—")</dd>
+            <dt>Criada</dt><dd>@Format.FullDateTime(job.CreatedAt)</dd>
+            @if (job.ScheduledAt is not null)
+            {
+                <dt>Agendada para</dt><dd>@Format.FullDateTime(job.ScheduledAt)</dd>
+            }
+            <dt>Início</dt><dd>@Format.FullDateTime(job.StartedAt)</dd>
+            <dt>Fim</dt><dd>@Format.FullDateTime(job.FinishedAt)</dd>
+            <dt>Duração</dt><dd>@Format.Duration(job.StartedAt, job.FinishedAt, DateTimeOffset.UtcNow)</dd>
+            @if (details.RecurringJobName is not null)
+            {
+                <dt>Recorrente</dt><dd>@details.RecurringJobName</dd>
+            }
+            @if (details.ConcurrencyKey is not null)
+            {
+                <dt>Chave de concorrência</dt><dd class="mono">@details.ConcurrencyKey</dd>
+            }
+            @if (details.IdempotencyKey is not null)
+            {
+                <dt>Chave de idempotência</dt><dd class="mono">@details.IdempotencyKey</dd>
+            }
+            @if (details.TimeoutSeconds is not null)
+            {
+                <dt>Tempo limite</dt><dd>@details.TimeoutSeconds s</dd>
+            }
+        </dl>
+
+        @if (job.LastError is not null)
+        {
+            <section class="drawer-section">
+                <h3>Último erro</h3>
+                <pre class="code code-error">@job.LastError</pre>
+            </section>
+        }
+
+        <section class="drawer-section">
+            <h3>Payload</h3>
+            @if (string.IsNullOrWhiteSpace(details.Payload))
+            {
+                <p class="muted small">Sem payload.</p>
+            }
+            else
+            {
+                <pre class="code">@Format.PrettyJson(details.Payload)</pre>
+            }
+        </section>
+
+        @if (!string.IsNullOrWhiteSpace(details.Result))
+        {
+            <section class="drawer-section">
+                <h3>Resultado</h3>
+                <pre class="code">@Format.PrettyJson(details.Result)</pre>
+            </section>
+        }
+
+        <section class="drawer-section">
+            <h3>Tentativas</h3>
+            @if (details.Attempts.Count == 0)
+            {
+                <p class="muted small">Ainda não executada.</p>
+            }
+            else
+            {
+                <table class="table compact">
+                    <thead><tr><th>Nº</th><th>Resultado</th><th>Worker</th><th>Início</th><th class="num">Duração</th></tr></thead>
+                    <tbody>
+                        @foreach (var attempt in details.Attempts)
+                        {
+                            <tr>
+                                <td>@attempt.Number</td>
+                                <td><span class="tag tag-@Format.OutcomeClass(attempt.Outcome)">@Format.Outcome(attempt.Outcome)</span></td>
+                                <td class="mono small">@attempt.WorkerId</td>
+                                <td>@Format.DateTime(attempt.StartedAt)</td>
+                                <td class="num">@Format.Duration(attempt.DurationMs)</td>
+                            </tr>
+                            @if (attempt.ErrorMessage is not null && attempt.Outcome != AttemptOutcome.Succeeded)
+                            {
+                                <tr class="row-note"><td></td><td colspan="4">@attempt.ErrorMessage</td></tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+
+        <section class="drawer-section">
+            <h3>Linha do tempo</h3>
+            <ol class="timeline">
+                @foreach (var change in details.History)
+                {
+                    <li class="timeline-item timeline-@Format.StateClass(change.To)">
+                        <span class="timeline-when">@Format.DateTime(change.OccurredAt)</span>
+                        <span class="timeline-what"><strong>@Format.State(change.To)</strong> @change.Reason</span>
+                    </li>
+                }
+            </ol>
+        </section>
+    }
+</aside>
+
+@code {
+    private JobDetails? details;
+    private string? error;
+    private bool busy;
+    private Debouncer? reload;
+
+    [Parameter, EditorRequired]
+    public Guid JobId { get; set; }
+
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    [Parameter]
+    public EventCallback OnChanged { get; set; }
+
+    protected override void OnInitialized()
+    {
+        reload = new Debouncer(TimeSpan.FromMilliseconds(600), () => InvokeAsync(LoadAsync));
+        Live.JobsChanged += OnJobsChanged;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (details?.Job.Id != JobId)
+        {
+            details = null;
+            await LoadAsync();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            details = await Api.GetJobAsync(JobId);
+            error = null;
+        }
+        catch (ApiException ex)
+        {
+            error = ex.Message;
+        }
+
+        StateHasChanged();
+    }
+
+    private void OnJobsChanged(IReadOnlyList<JobStatusChanged> changes)
+    {
+        if (changes.Any(c => c.JobId == JobId))
+        {
+            reload?.Trigger();
+        }
+    }
+
+    private Task CancelAsync() => RunAsync(() => Api.CancelAsync(JobId));
+
+    private Task RequeueAsync() => RunAsync(() => Api.RequeueAsync(JobId));
+
+    private async Task DeleteAsync()
+    {
+        busy = true;
+        try
+        {
+            var response = await Api.DeleteAsync(JobId);
+            ToastService.Success(response.Message);
+            await OnChanged.InvokeAsync();
+            await CloseAsync();
+        }
+        catch (ApiException ex)
+        {
+            ToastService.Error(ex.Message);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task RunAsync(Func<Task<ActionResponse>> action)
+    {
+        busy = true;
+        try
+        {
+            var response = await action();
+            ToastService.Success(response.Message);
+            await LoadAsync();
+            await OnChanged.InvokeAsync();
+        }
+        catch (ApiException ex)
+        {
+            ToastService.Error(ex.Message);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private Task CloseAsync() => OnClose.InvokeAsync();
+
+    private Task OnKeyDown(KeyboardEventArgs args) => args.Key == "Escape" ? CloseAsync() : Task.CompletedTask;
+
+    public void Dispose()
+    {
+        Live.JobsChanged -= OnJobsChanged;
+        reload?.Dispose();
+    }
+}

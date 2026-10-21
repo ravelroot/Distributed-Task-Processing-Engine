@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - ".github/atividade.txt"
+      - "**/*.md"
+      - "**/*.pdf"
+      - "docs/**"
+  pull_request:
+  schedule:
+    - cron: "27 13 * * *"  # todo dia às 10:27 (Brasília)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build e testes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: turno
+          POSTGRES_PASSWORD: turno-ci
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U turno"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+      rabbitmq:
+        image: rabbitmq:4-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: turno
+          RABBITMQ_DEFAULT_PASS: turno-ci
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s --health-timeout 5s --health-retries 20
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      TURNO_TEST_POSTGRES: Host=localhost;Port=5432;Username=turno;Password=turno-ci;Database=postgres
+      TURNO_TEST_REDIS: localhost:6379
+      TURNO_TEST_RABBITMQ: amqp://turno:turno-ci@localhost:5672
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restaurar
+        run: dotnet restore Turno.slnx
+
+      - name: Compilar
+        run: dotnet build Turno.slnx -c Release --no-restore
+
+      - name: Testes de unidade
+        run: dotnet test tests/Turno.Tests/Turno.Tests.csproj -c Release --no-build
+
+      - name: Testes distribuídos (PostgreSQL, Redis e RabbitMQ reais)
+        run: dotnet test tests/Turno.IntegrationTests/Turno.IntegrationTests.csproj -c Release --no-build
+
+  docker:
+    name: Imagens Docker
+    runs-on: ubuntu-24.04
+    needs: build
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker build --target api -t turno-api:ci .
+      - run: docker build --target worker -t turno-worker:ci .

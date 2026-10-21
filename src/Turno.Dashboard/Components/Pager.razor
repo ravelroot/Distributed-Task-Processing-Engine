@@ -1,0 +1,21 @@
+@if (TotalPages > 1)
+{
+    <nav class="pager" aria-label="Paginação">
+        <button type="button" class="ghost small" disabled="@(Page <= 1)" @onclick="() => GoAsync(Page - 1)">Anterior</button>
+        <span class="pager-info">Página @Page de @TotalPages</span>
+        <button type="button" class="ghost small" disabled="@(Page >= TotalPages)" @onclick="() => GoAsync(Page + 1)">Próxima</button>
+    </nav>
+}
+
+@code {
+    [Parameter]
+    public int Page { get; set; }
+
+    [Parameter]
+    public int TotalPages { get; set; }
+
+    [Parameter]
+    public EventCallback<int> PageChanged { get; set; }
+
+    private Task GoAsync(int page) => PageChanged.InvokeAsync(page);
+}

@@ -1,0 +1,67 @@
+<svg class="icon" width="@Size" height="@Size" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+    @switch (Name)
+    {
+        case "overview":
+            <rect x="3" y="3" width="6" height="8" rx="1" />
+            <rect x="11" y="3" width="6" height="5" rx="1" />
+            <rect x="11" y="10" width="6" height="7" rx="1" />
+            <rect x="3" y="13" width="6" height="4" rx="1" />
+            break;
+        case "jobs":
+            <path d="M4 5h12M4 10h12M4 15h7" />
+            break;
+        case "recurring":
+            <circle cx="10" cy="10" r="6.5" />
+            <path d="M10 6.5V10l2.5 1.5" />
+            break;
+        case "workers":
+            <rect x="3" y="4" width="14" height="5" rx="1" />
+            <rect x="3" y="11" width="14" height="5" rx="1" />
+            <path d="M6 6.5h.01M6 13.5h.01" />
+            break;
+        case "dead":
+            <path d="M10 3.5 17 16H3z" />
+            <path d="M10 8.5v3.5M10 14h.01" />
+            break;
+        case "plus":
+            <path d="M10 4.5v11M4.5 10h11" />
+            break;
+        case "close":
+            <path d="M5 5l10 10M15 5 5 15" />
+            break;
+        case "search":
+            <circle cx="9" cy="9" r="5" />
+            <path d="m13 13 3.5 3.5" />
+            break;
+        case "play":
+            <path d="M6.5 4.5v11l9-5.5z" />
+            break;
+        case "pause":
+            <path d="M7 4.5v11M13 4.5v11" />
+            break;
+        case "requeue":
+            <path d="M4 10a6 6 0 1 0 1.8-4.3" />
+            <path d="M4 4v3.5h3.5" />
+            break;
+        case "stop":
+            <rect x="5" y="5" width="10" height="10" rx="1.5" />
+            break;
+        case "trash":
+            <path d="M4.5 6h11M8 6V4h4v2M6 6l.8 10h6.4L14 6" />
+            break;
+        case "external":
+            <path d="M8 4H4v12h12v-4M11 4h5v5M16 4l-7 7" />
+            break;
+        default:
+            <circle cx="10" cy="10" r="2" />
+            break;
+    }
+</svg>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Name { get; set; } = string.Empty;
+
+    [Parameter]
+    public int Size { get; set; } = 18;
+}

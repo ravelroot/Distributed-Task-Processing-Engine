@@ -1,0 +1,141 @@
+@page "/workers"
+@implements IDisposable
+@inject TurnoApi Api
+@inject LiveConnection Live
+
+<PageTitle>Workers | Turno</PageTitle>
+
+<header class="page-head">
+    <h1>Workers</h1>
+    <p class="muted page-note">Instâncias de <code>Turno.Worker</code> registradas. Um worker sem sinal por 30 s é tratado como offline e as tarefas dele voltam para a fila quando o lease expira.</p>
+</header>
+
+@if (error is not null)
+{
+    <p class="field-error">@error</p>
+}
+
+<section class="panel flush">
+    @if (workers is null)
+    {
+        <p class="muted pad">Carregando workers…</p>
+    }
+    else if (workers.Count == 0)
+    {
+        <div class="empty">
+            <p><strong>Nenhum worker registrado.</strong></p>
+            <p class="muted">Inicie um worker com <code>dotnet run --project src/Turno.Worker</code> ou <code>docker compose up -d --scale worker=3</code>.</p>
+        </div>
+    }
+    else
+    {
+        <div class="table-scroll">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Worker</th>
+                        <th>Estado</th>
+                        <th>Filas</th>
+                        <th class="num">Em execução</th>
+                        <th class="num">Processadas</th>
+                        <th class="num">Falhas</th>
+                        <th>Último sinal</th>
+                        <th>Ativo desde</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var worker in workers)
+                    {
+                        var status = Effective(worker);
+                        <tr @key="worker.Id" class="@(status == WorkerStatus.Offline ? "dimmed" : null)">
+                            <td>
+                                <span class="mono">@worker.Id</span>
+                                <div class="muted small">@worker.HostName, PID @worker.ProcessId, versão @worker.Version</div>
+                            </td>
+                            <td><span class="badge badge-@Format.WorkerClass(status)"><span class="badge-dot" aria-hidden="true"></span>@Format.Worker(status)</span></td>
+                            <td>
+                                @string.Join(", ", worker.Queues)
+                                <div class="muted small" title="@string.Join(", ", worker.JobTypes)">@worker.JobTypes.Count tipo(s) de tarefa</div>
+                            </td>
+                            <td class="num">@worker.RunningJobs/@worker.Concurrency</td>
+                            <td class="num">@Format.Number(worker.ProcessedJobs)</td>
+                            <td class="num">@Format.Number(worker.FailedJobs)</td>
+                            <td title="@Format.FullDateTime(worker.LastHeartbeatAt)">@Format.Relative(worker.LastHeartbeatAt, now)</td>
+                            <td title="@Format.FullDateTime(worker.StartedAt)">@Format.Relative(worker.StartedAt, now)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
+
+@code {
+    private List<WorkerDto>? workers;
+    private string? error;
+    private DateTimeOffset now = DateTimeOffset.UtcNow;
+    private Timer? clock;
+    private Timer? refresh;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Live.WorkersChanged += OnWorkersChanged;
+        clock = new Timer(_ => InvokeAsync(() => { now = DateTimeOffset.UtcNow; StateHasChanged(); }), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        refresh = new Timer(_ => InvokeAsync(LoadAsync), null, TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(20));
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            workers = (await Api.ListWorkersAsync()).ToList();
+            error = null;
+        }
+        catch (ApiException ex)
+        {
+            error = ex.Message;
+        }
+
+        StateHasChanged();
+    }
+
+    private WorkerStatus Effective(WorkerDto worker) =>
+        worker.Status != WorkerStatus.Offline && now - worker.LastHeartbeatAt > TimeSpan.FromSeconds(30) ? WorkerStatus.Offline : worker.Status;
+
+    private void OnWorkersChanged(IReadOnlyList<WorkerStatusChanged> changes)
+    {
+        if (workers is null)
+        {
+            return;
+        }
+
+        foreach (var change in changes)
+        {
+            var index = workers.FindIndex(w => w.Id == change.WorkerId);
+            if (index < 0)
+            {
+                _ = InvokeAsync(LoadAsync);
+                return;
+            }
+
+            workers[index] = workers[index] with
+            {
+                Status = change.Status,
+                RunningJobs = change.RunningJobs,
+                ProcessedJobs = change.ProcessedJobs,
+                FailedJobs = change.FailedJobs,
+                LastHeartbeatAt = change.LastHeartbeatAt
+            };
+        }
+
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Live.WorkersChanged -= OnWorkersChanged;
+        clock?.Dispose();
+        refresh?.Dispose();
+    }
+}

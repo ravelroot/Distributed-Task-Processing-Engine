@@ -1,0 +1,257 @@
+@page "/tarefas"
+@implements IDisposable
+@inject TurnoApi Api
+@inject LiveConnection Live
+@inject NavigationManager Navigation
+@inject UiState Ui
+
+<PageTitle>Tarefas | Turno</PageTitle>
+
+<header class="page-head">
+    <h1>Tarefas</h1>
+    <div class="page-actions">
+        <label class="search">
+            <Icon Name="search" Size="16" />
+            <input type="search" placeholder="Buscar por ID, tipo ou worker" aria-label="Buscar tarefas" @bind="search" @bind:event="oninput" @bind:after="OnSearchChanged" />
+        </label>
+        <button type="button" class="primary" @onclick="Ui.OpenNewJob"><Icon Name="plus" Size="16" />Nova tarefa</button>
+    </div>
+</header>
+
+<nav class="tabs" aria-label="Filtrar por estado">
+    <a class="tab @(State is null ? "active" : null)" href="@Link(null)">Todas <span class="tab-count">@Format.Number(counts?.Total ?? 0)</span></a>
+    @foreach (var option in States)
+    {
+        <a class="tab @(State == option ? "active" : null)" href="@Link(option)">
+            <span class="badge-dot dot-@Format.StateClass(option)" aria-hidden="true"></span>@Format.State(option)
+            <span class="tab-count">@Format.Number(counts?.Get(option) ?? 0)</span>
+        </a>
+    }
+</nav>
+
+@if (error is not null)
+{
+    <p class="field-error">@error</p>
+}
+
+<section class="panel flush">
+    @if (page is null)
+    {
+        <p class="muted pad">Carregando tarefas…</p>
+    }
+    else if (page.Items.Count == 0)
+    {
+        <div class="empty">
+            <p><strong>@(State is null && string.IsNullOrWhiteSpace(search) ? "Nenhuma tarefa ainda." : "Nenhuma tarefa com esse filtro.")</strong></p>
+            <p class="muted">Crie uma pelo botão Nova tarefa ou pela API: <code>POST /api/jobs</code>.</p>
+        </div>
+    }
+    else
+    {
+        <div class="table-scroll">
+            <table class="table clickable">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Tipo</th>
+                        <th>Fila</th>
+                        <th>Estado</th>
+                        <th class="num">Tentativa</th>
+                        <th>Worker</th>
+                        <th>Criada</th>
+                        <th class="num">Duração</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var job in page.Items)
+                    {
+                        <tr @key="job.Id" class="@(job.Id == Id ? "selected" : null)" @onclick="() => Open(job.Id)" tabindex="0" @onkeydown="args => OnRowKey(args, job.Id)">
+                            <td class="mono">@Format.ShortId(job.Id)</td>
+                            <td>@job.Type</td>
+                            <td>@job.Queue</td>
+                            <td>
+                                <span class="state-cell">
+                                    <StateBadge State="job.State" />
+                                    @if (job.State == JobState.Processing)
+                                    {
+                                        <ProgressBar Value="@(job.Progress ?? 0)" />
+                                    }
+                                    else if (job.State == JobState.Scheduled && job.ScheduledAt is not null)
+                                    {
+                                        <span class="muted small">@Format.Relative(job.ScheduledAt, now)</span>
+                                    }
+                                </span>
+                            </td>
+                            <td class="num">@job.Attempt/@job.MaxAttempts</td>
+                            <td class="mono small truncate" title="@job.WorkerId">@(job.WorkerId ?? "—")</td>
+                            <td title="@Format.FullDateTime(job.CreatedAt)">@Format.Relative(job.CreatedAt, now)</td>
+                            <td class="num">@Format.Duration(job.StartedAt, job.FinishedAt, now)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <Pager Page="page.Page" TotalPages="page.TotalPages" PageChanged="GoToPage" />
+    }
+</section>
+
+@if (Id is { } selected)
+{
+    <JobDrawer JobId="selected" OnClose="CloseDrawer" OnChanged="() => reload?.Trigger()" />
+}
+
+@code {
+    private static readonly JobState[] States = [JobState.Scheduled, JobState.Enqueued, JobState.Processing, JobState.Succeeded, JobState.Failed, JobState.Cancelled];
+    private const int PageSize = 25;
+
+    private PagedResult<JobSummary>? page;
+    private StateCounts? counts;
+    private string? search;
+    private string? error;
+    private DateTimeOffset now = DateTimeOffset.UtcNow;
+    private Debouncer? reload;
+    private Debouncer? searchDelay;
+    private Timer? clock;
+    private string? loadedKey;
+
+    [SupplyParameterFromQuery(Name = "estado")]
+    public string? StateParameter { get; set; }
+
+    [SupplyParameterFromQuery(Name = "busca")]
+    public string? SearchParameter { get; set; }
+
+    [SupplyParameterFromQuery(Name = "pagina")]
+    public int? PageParameter { get; set; }
+
+    [SupplyParameterFromQuery(Name = "id")]
+    public Guid? Id { get; set; }
+
+    private JobState? State => Enum.TryParse<JobState>(StateParameter, true, out var value) ? value : null;
+
+    protected override void OnInitialized()
+    {
+        reload = new Debouncer(TimeSpan.FromMilliseconds(1000), () => InvokeAsync(LoadAsync));
+        searchDelay = new Debouncer(TimeSpan.FromMilliseconds(400), () => InvokeAsync(ApplySearch));
+        Live.JobsChanged += OnJobsChanged;
+        Ui.JobCreated += OnJobCreated;
+        clock = new Timer(_ => InvokeAsync(() => { now = DateTimeOffset.UtcNow; StateHasChanged(); }), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        search ??= SearchParameter;
+        var key = $"{StateParameter}|{SearchParameter}|{PageParameter}";
+        if (key != loadedKey)
+        {
+            loadedKey = key;
+            await LoadAsync();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var listTask = Api.ListJobsAsync(State, SearchParameter, null, null, Math.Max(1, PageParameter ?? 1), PageSize);
+            var statsTask = Api.GetStatsAsync();
+            await Task.WhenAll(listTask, statsTask);
+            page = listTask.Result;
+            counts = statsTask.Result.Counts;
+            error = null;
+        }
+        catch (ApiException ex)
+        {
+            error = ex.Message;
+        }
+        catch (HttpRequestException)
+        {
+            error = "Sem resposta da API.";
+        }
+
+        now = DateTimeOffset.UtcNow;
+        StateHasChanged();
+    }
+
+    private void OnJobsChanged(IReadOnlyList<JobStatusChanged> changes)
+    {
+        if (page is null)
+        {
+            return;
+        }
+
+        var items = page.Items.ToList();
+        var touched = false;
+        foreach (var change in changes)
+        {
+            var index = items.FindIndex(j => j.Id == change.JobId);
+            if (index < 0)
+            {
+                continue;
+            }
+
+            var current = items[index];
+            items[index] = current with
+            {
+                State = change.State,
+                Attempt = change.Attempt,
+                Progress = change.State == JobState.Processing ? change.Progress ?? current.Progress : current.Progress,
+                WorkerId = change.WorkerId ?? current.WorkerId,
+                StartedAt = change.State == JobState.Processing && current.State != JobState.Processing ? change.OccurredAt : current.StartedAt,
+                FinishedAt = change.State is JobState.Succeeded or JobState.Failed or JobState.Cancelled ? change.OccurredAt : current.FinishedAt
+            };
+            touched = true;
+        }
+
+        if (touched)
+        {
+            page = page with { Items = items };
+        }
+
+        reload?.Trigger();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnJobCreated() => reload?.Trigger();
+
+    private void OnSearchChanged() => searchDelay?.Trigger();
+
+    private void ApplySearch()
+    {
+        Navigation.NavigateTo(Navigation.GetUriWithQueryParameters(new Dictionary<string, object?>
+        {
+            ["busca"] = string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
+            ["pagina"] = null
+        }));
+    }
+
+    private string Link(JobState? state) => Navigation.GetUriWithQueryParameters(new Dictionary<string, object?>
+    {
+        ["estado"] = state?.ToString(),
+        ["pagina"] = null,
+        ["id"] = null
+    });
+
+    private void GoToPage(int number) =>
+        Navigation.NavigateTo(Navigation.GetUriWithQueryParameter("pagina", number <= 1 ? (int?)null : number));
+
+    private void Open(Guid id) => Navigation.NavigateTo(Navigation.GetUriWithQueryParameter("id", id));
+
+    private void OnRowKey(KeyboardEventArgs args, Guid id)
+    {
+        if (args.Key is "Enter" or " ")
+        {
+            Open(id);
+        }
+    }
+
+    private void CloseDrawer() => Navigation.NavigateTo(Navigation.GetUriWithQueryParameter("id", (Guid?)null));
+
+    public void Dispose()
+    {
+        Live.JobsChanged -= OnJobsChanged;
+        Ui.JobCreated -= OnJobCreated;
+        reload?.Dispose();
+        searchDelay?.Dispose();
+        clock?.Dispose();
+    }
+}

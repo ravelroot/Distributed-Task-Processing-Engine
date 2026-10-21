@@ -1,0 +1,245 @@
+@page "/"
+@implements IDisposable
+@inject TurnoApi Api
+@inject LiveConnection Live
+@inject UiState Ui
+
+<PageTitle>Visão geral | Turno</PageTitle>
+
+<header class="page-head">
+    <h1>Visão geral</h1>
+    <div class="page-actions">
+        <button type="button" class="primary" @onclick="Ui.OpenNewJob"><Icon Name="plus" Size="16" />Nova tarefa</button>
+    </div>
+</header>
+
+@if (error is not null)
+{
+    <p class="field-error">@error</p>
+}
+
+@if (stats is null)
+{
+    <p class="muted">Carregando indicadores…</p>
+}
+else
+{
+    <section class="strip" aria-label="Indicadores">
+        <a class="strip-item" href="tarefas?estado=Enqueued">
+            <span class="strip-value">@Format.Number(stats.Counts.Enqueued)</span>
+            <span class="strip-label">Na fila</span>
+        </a>
+        <a class="strip-item" href="tarefas?estado=Processing">
+            <span class="strip-value">@Format.Number(stats.Counts.Processing)<small> / @stats.CapacityOnline</small></span>
+            <span class="strip-label">Executando agora</span>
+        </a>
+        <a class="strip-item" href="tarefas?estado=Scheduled">
+            <span class="strip-value">@Format.Number(stats.Counts.Scheduled)</span>
+            <span class="strip-label">Agendadas</span>
+        </a>
+        <a class="strip-item" href="tarefas?estado=Succeeded">
+            <span class="strip-value">@Format.Number(stats.SucceededLast24Hours)</span>
+            <span class="strip-label">Sucesso em 24 h</span>
+        </a>
+        <a class="strip-item" href="tarefas?estado=Failed">
+            <span class="strip-value">@Format.Number(stats.FailedAttemptsLast24Hours)</span>
+            <span class="strip-label">Tentativas com falha em 24 h</span>
+        </a>
+        <a class="strip-item @(stats.PendingDeadLetters > 0 ? "strip-alert" : null)" href="erros">
+            <span class="strip-value">@Format.Number(stats.PendingDeadLetters)</span>
+            <span class="strip-label">Na fila de erros</span>
+        </a>
+        <div class="strip-item">
+            <span class="strip-value">@Format.Duration(stats.AverageDurationMs)</span>
+            <span class="strip-label">Duração média, 1 h</span>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <div>
+                <h2>Quadro de turnos</h2>
+                <p class="muted small">Cada linha é um worker online; cada casa é uma vaga de execução.</p>
+            </div>
+            <span class="muted small">@stats.WorkersOnline worker(s), @stats.CapacityOnline vaga(s)</span>
+        </div>
+        <ShiftBoard Workers="OnlineWorkers" Running="running" Now="now" />
+    </section>
+
+    <div class="split">
+        <section class="panel">
+            <div class="panel-head">
+                <h2>Execuções por minuto</h2>
+                <span class="muted small">última hora</span>
+            </div>
+            <ThroughputChart Points="stats.Throughput" />
+        </section>
+
+        <section class="panel">
+            <div class="panel-head">
+                <h2>Filas</h2>
+            </div>
+            @if (stats.Queues.Count == 0)
+            {
+                <p class="muted small">Nenhuma tarefa pendente agora.</p>
+            }
+            else
+            {
+                <table class="table compact">
+                    <thead><tr><th>Fila</th><th class="num">Agendadas</th><th class="num">Na fila</th><th class="num">Executando</th></tr></thead>
+                    <tbody>
+                        @foreach (var queue in stats.Queues)
+                        {
+                            <tr>
+                                <td>@queue.Queue</td>
+                                <td class="num">@Format.Number(queue.Scheduled)</td>
+                                <td class="num">@Format.Number(queue.Enqueued)</td>
+                                <td class="num">@Format.Number(queue.Processing)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+    </div>
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Falhas recentes</h2>
+            <a href="erros" class="small">Abrir a fila de erros</a>
+        </div>
+        @if (failures.Count == 0)
+        {
+            <p class="muted small">Nenhuma tarefa esgotou as tentativas.</p>
+        }
+        else
+        {
+            <table class="table">
+                <thead><tr><th>Tarefa</th><th>Tipo</th><th>Erro</th><th class="num">Tentativas</th><th>Quando</th></tr></thead>
+                <tbody>
+                    @foreach (var item in failures)
+                    {
+                        <tr>
+                            <td><a class="mono" href="tarefas?id=@item.JobId">@Format.ShortId(item.JobId)</a></td>
+                            <td>@item.Type</td>
+                            <td class="cell-error" title="@item.ErrorMessage">@item.ErrorMessage</td>
+                            <td class="num">@item.Attempts</td>
+                            <td title="@Format.FullDateTime(item.FailedAt)">@Format.Relative(item.FailedAt, now)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    private StatsResponse? stats;
+    private List<WorkerDto> workers = [];
+    private IReadOnlyList<JobSummary> running = [];
+    private IReadOnlyList<DeadLetterDto> failures = [];
+    private DateTimeOffset now = DateTimeOffset.UtcNow;
+    private string? error;
+    private Debouncer? reload;
+    private Timer? clock;
+    private Timer? fallback;
+
+    private IReadOnlyList<WorkerDto> OnlineWorkers => workers.Where(w => w.Status != WorkerStatus.Offline).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        reload = new Debouncer(TimeSpan.FromMilliseconds(1200), () => InvokeAsync(LoadAsync));
+        Live.JobsChanged += OnJobsChanged;
+        Live.WorkersChanged += OnWorkersChanged;
+        Ui.JobCreated += OnJobCreated;
+        clock = new Timer(_ => InvokeAsync(() => { now = DateTimeOffset.UtcNow; StateHasChanged(); }), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        fallback = new Timer(_ => reload?.Trigger(), null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var statsTask = Api.GetStatsAsync();
+            var workersTask = Api.ListWorkersAsync();
+            var runningTask = Api.ListJobsAsync(JobState.Processing, null, null, null, 1, 200);
+            var failuresTask = Api.ListDeadLettersAsync(true, 1, 5);
+            await Task.WhenAll(statsTask, workersTask, runningTask, failuresTask);
+            stats = statsTask.Result;
+            workers = workersTask.Result.ToList();
+            running = runningTask.Result.Items;
+            failures = failuresTask.Result.Items;
+            error = null;
+        }
+        catch (ApiException ex)
+        {
+            error = ex.Message;
+        }
+        catch (HttpRequestException)
+        {
+            error = "Sem resposta da API. Tentando de novo em instantes.";
+        }
+
+        now = DateTimeOffset.UtcNow;
+        StateHasChanged();
+    }
+
+    private void OnJobsChanged(IReadOnlyList<JobStatusChanged> changes)
+    {
+        var updated = running.ToDictionary(j => j.Id);
+        foreach (var change in changes)
+        {
+            if (change.State == JobState.Processing && change.WorkerId is not null)
+            {
+                updated[change.JobId] = updated.TryGetValue(change.JobId, out var current)
+                    ? current with { Progress = change.Progress ?? current.Progress, Attempt = change.Attempt }
+                    : new JobSummary(change.JobId, change.Type, change.Queue, JobState.Processing, change.Attempt, change.MaxAttempts, change.Progress, change.WorkerId, change.OccurredAt, null, change.OccurredAt, null, null, false);
+            }
+            else
+            {
+                updated.Remove(change.JobId);
+            }
+        }
+
+        running = updated.Values.ToList();
+        reload?.Trigger();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnWorkersChanged(IReadOnlyList<WorkerStatusChanged> changes)
+    {
+        foreach (var change in changes)
+        {
+            var index = workers.FindIndex(w => w.Id == change.WorkerId);
+            if (index < 0)
+            {
+                reload?.Trigger();
+                continue;
+            }
+
+            workers[index] = workers[index] with
+            {
+                Status = change.Status,
+                RunningJobs = change.RunningJobs,
+                ProcessedJobs = change.ProcessedJobs,
+                FailedJobs = change.FailedJobs,
+                LastHeartbeatAt = change.LastHeartbeatAt
+            };
+        }
+
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnJobCreated() => reload?.Trigger();
+
+    public void Dispose()
+    {
+        Live.JobsChanged -= OnJobsChanged;
+        Live.WorkersChanged -= OnWorkersChanged;
+        Ui.JobCreated -= OnJobCreated;
+        reload?.Dispose();
+        clock?.Dispose();
+        fallback?.Dispose();
+    }
+}

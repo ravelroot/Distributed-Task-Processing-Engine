@@ -1,0 +1,209 @@
+@implements IDisposable
+@using System.Text.Json
+@inject UiState Ui
+@inject TurnoApi Api
+@inject Toasts ToastService
+@inject NavigationManager Navigation
+
+@if (Ui.NewJobOpen)
+{
+    <div class="overlay" @onclick="Close"></div>
+    <div class="dialog-wrap">
+        <form class="dialog" @onsubmit="SubmitAsync" @onkeydown="OnKeyDown" aria-labelledby="new-job-title">
+            <div class="dialog-head">
+                <h2 id="new-job-title">Nova tarefa</h2>
+                <button type="button" class="icon-button" aria-label="Fechar" @onclick="Close"><Icon Name="close" /></button>
+            </div>
+
+            <div class="grid-2">
+                <label class="field">
+                    <span>Tipo</span>
+                    <input list="known-types" @bind="type" @bind:after="SuggestPayload" placeholder="report.generate" required />
+                    <datalist id="known-types">
+                        @foreach (var known in types)
+                        {
+                            <option value="@known"></option>
+                        }
+                    </datalist>
+                    @if (types.Count == 0)
+                    {
+                        <small class="muted">Nenhum worker online anunciou tipos ainda.</small>
+                    }
+                </label>
+                <label class="field">
+                    <span>Fila</span>
+                    <input @bind="queue" placeholder="default" />
+                </label>
+            </div>
+
+            <label class="field">
+                <span>Payload (JSON)</span>
+                <textarea rows="7" class="mono" spellcheck="false" @bind="payload"></textarea>
+            </label>
+
+            <fieldset class="field">
+                <legend>Quando executar</legend>
+                <div class="segmented" role="radiogroup">
+                    <label class="@(when == "now" ? "on" : null)"><input type="radio" name="when" checked="@(when == "now")" @onchange='() => when = "now"' />Agora</label>
+                    <label class="@(when == "delay" ? "on" : null)"><input type="radio" name="when" checked="@(when == "delay")" @onchange='() => when = "delay"' />Daqui a</label>
+                    <label class="@(when == "at" ? "on" : null)"><input type="radio" name="when" checked="@(when == "at")" @onchange='() => when = "at"' />Em data e hora</label>
+                </div>
+                @if (when == "delay")
+                {
+                    <label class="inline-field"><input type="number" min="1" @bind="delaySeconds" /> segundos</label>
+                }
+                else if (when == "at")
+                {
+                    <input type="datetime-local" @bind="runAt" @bind:format="yyyy-MM-ddTHH:mm" />
+                }
+            </fieldset>
+
+            <details class="advanced">
+                <summary>Opções avançadas</summary>
+                <div class="grid-3">
+                    <label class="field">
+                        <span>Máximo de tentativas</span>
+                        <input type="number" min="1" max="100" @bind="maxAttempts" placeholder="padrão do servidor" />
+                    </label>
+                    <label class="field">
+                        <span>Tempo limite (s)</span>
+                        <input type="number" min="1" @bind="timeoutSeconds" placeholder="padrão do servidor" />
+                    </label>
+                    <label class="field">
+                        <span>Chave de concorrência</span>
+                        <input @bind="concurrencyKey" placeholder="ex.: cliente-42" />
+                    </label>
+                </div>
+            </details>
+
+            @if (error is not null)
+            {
+                <p class="field-error">@error</p>
+            }
+
+            <div class="dialog-actions">
+                <button type="button" class="ghost" @onclick="Close">Cancelar</button>
+                <button type="submit" class="primary" disabled="@busy">Criar tarefa</button>
+            </div>
+        </form>
+    </div>
+}
+
+@code {
+    private static readonly Dictionary<string, string> Examples = new(StringComparer.Ordinal)
+    {
+        ["report.generate"] = "{\n  \"rows\": 200000,\n  \"segments\": 8\n}",
+        ["file.process"] = "{\n  \"sizeMb\": 64,\n  \"chunkMb\": 4,\n  \"delayPerChunkMs\": 150\n}",
+        ["integration.sync"] = "{\n  \"records\": 50,\n  \"failureRate\": 0.3,\n  \"latencyMs\": 400\n}",
+        ["notification.send"] = "{\n  \"to\": \"pessoa@example.com\",\n  \"channel\": \"email\",\n  \"subject\": \"Teste do Turno\"\n}"
+    };
+
+    private IReadOnlyList<string> types = [];
+    private string type = string.Empty;
+    private string queue = "default";
+    private string payload = string.Empty;
+    private string when = "now";
+    private int? delaySeconds = 30;
+    private DateTime? runAt;
+    private int? maxAttempts;
+    private int? timeoutSeconds;
+    private string? concurrencyKey;
+    private string? error;
+    private bool busy;
+    private bool wasOpen;
+
+    protected override void OnInitialized() => Ui.Changed += OnUiChanged;
+
+    private async void OnUiChanged()
+    {
+        if (Ui.NewJobOpen && !wasOpen)
+        {
+            wasOpen = true;
+            error = null;
+            runAt ??= DateTime.Now.AddMinutes(5);
+            try
+            {
+                types = await Api.ListJobTypesAsync();
+            }
+            catch (ApiException)
+            {
+                types = [];
+            }
+        }
+        else if (!Ui.NewJobOpen)
+        {
+            wasOpen = false;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void SuggestPayload()
+    {
+        if (string.IsNullOrWhiteSpace(payload) || Examples.Values.Contains(payload))
+        {
+            payload = Examples.TryGetValue(type.Trim(), out var example) ? example : payload;
+        }
+    }
+
+    private void Close() => Ui.CloseNewJob();
+
+    private void OnKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape")
+        {
+            Close();
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        error = null;
+        JsonElement? body = null;
+        if (!string.IsNullOrWhiteSpace(payload))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(payload);
+                body = document.RootElement.Clone();
+            }
+            catch (JsonException ex)
+            {
+                error = $"O payload não é um JSON válido: {ex.Message}";
+                return;
+            }
+        }
+
+        var request = new EnqueueJobRequest
+        {
+            Type = type,
+            Queue = string.IsNullOrWhiteSpace(queue) ? null : queue,
+            Payload = body,
+            DelaySeconds = when == "delay" ? delaySeconds : null,
+            RunAt = when == "at" && runAt is { } local ? new DateTimeOffset(local, TimeZoneInfo.Local.GetUtcOffset(local)) : null,
+            MaxAttempts = maxAttempts,
+            TimeoutSeconds = timeoutSeconds,
+            ConcurrencyKey = string.IsNullOrWhiteSpace(concurrencyKey) ? null : concurrencyKey
+        };
+
+        busy = true;
+        try
+        {
+            var response = await Api.EnqueueAsync(request);
+            ToastService.Success(response.State == JobState.Scheduled ? "Tarefa agendada." : "Tarefa enviada para a fila.");
+            Ui.CloseNewJob();
+            Ui.NotifyJobCreated();
+            Navigation.NavigateTo($"tarefas?id={response.Id}");
+        }
+        catch (ApiException ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    public void Dispose() => Ui.Changed -= OnUiChanged;
+}

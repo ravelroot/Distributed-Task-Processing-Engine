@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Turno</title>
+    <base href="/" />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <link rel="preload" href="fonts/red-hat-text-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="css/app.css" />
+    <script src="js/turno.js"></script>
+</head>
+<body>
+    <div id="app">
+        <div class="boot" role="status">
+            <svg width="40" height="40" viewBox="0 0 32 32" aria-hidden="true">
+                <rect width="32" height="32" rx="7" fill="#000000" />
+                <path d="M16 6.5a9.5 9.5 0 0 1 8.23 4.75" fill="none" stroke="#FFFFFF" stroke-width="3.4" stroke-linecap="round" />
+                <path d="M25.5 16a9.5 9.5 0 0 1-4.75 8.23" fill="none" stroke="#FFFFFF" stroke-width="3.4" stroke-linecap="round" />
+                <path d="M16 25.5a9.5 9.5 0 0 1-8.23-4.75" fill="none" stroke="#FFFFFF" stroke-width="3.4" stroke-linecap="round" />
+                <path d="M6.5 16a9.5 9.5 0 0 1 4.75-8.23" fill="none" stroke="#FFFFFF" stroke-width="3.4" stroke-linecap="round" />
+                <circle cx="16" cy="16" r="2.6" fill="#FFFFFF" />
+            </svg>
+            <p>Carregando o painel…</p>
+        </div>
+    </div>
+    <div id="blazor-error-ui" role="alert">
+        O painel encontrou um erro inesperado. <a href="" class="reload">Recarregar</a>
+        <button type="button" class="dismiss" aria-label="Fechar">×</button>
+    </div>
+    <script src="_framework/blazor.webassembly.js"></script>
+</body>
+</html>

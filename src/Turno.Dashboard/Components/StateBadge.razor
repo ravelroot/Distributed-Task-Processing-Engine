@@ -1,0 +1,6 @@
+<span class="badge badge-@Format.StateClass(State)"><span class="badge-dot" aria-hidden="true"></span>@Format.State(State)</span>
+
+@code {
+    [Parameter, EditorRequired]
+    public JobState State { get; set; }
+}
