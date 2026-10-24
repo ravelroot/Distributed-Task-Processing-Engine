@@ -9,13 +9,18 @@
 <div class="shell">
     <aside class="sidebar">
         <a class="brand" href="" aria-label="Turno, visão geral">
-            <BrandMark Size="26" />
-            <span class="brand-name">Turno</span>
+            <BrandMark Size="32" />
+            <span class="brand-text">
+                <span class="brand-name">Turno</span>
+                <span class="brand-sub">Tarefas distribuídas</span>
+            </span>
         </a>
         <nav class="nav" aria-label="Seções do painel">
+            <span class="nav-title">Operação</span>
             <NavLink class="nav-link" href="" Match="NavLinkMatch.All"><Icon Name="overview" />Visão geral</NavLink>
             <NavLink class="nav-link" href="tarefas"><Icon Name="jobs" />Tarefas</NavLink>
             <NavLink class="nav-link" href="recorrentes"><Icon Name="recurring" />Recorrentes</NavLink>
+            <span class="nav-title">Cluster</span>
             <NavLink class="nav-link" href="workers"><Icon Name="workers" />Workers</NavLink>
             <NavLink class="nav-link" href="erros"><Icon Name="dead" />Fila de erros</NavLink>
         </nav>
@@ -26,7 +31,7 @@
             <button type="button" class="ghost small" @onclick="ToggleThemeAsync">@(dark ? "Tema claro" : "Tema escuro")</button>
             @if (info is not null)
             {
-                <span class="foot-meta">Versão @info.Version, @info.Transport</span>
+                <span class="foot-meta">Versão @info.Version · @info.Transport</span>
             }
         </div>
     </aside>

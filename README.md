@@ -20,7 +20,7 @@
 > **Banco de dados:** [`Banco-de-Dados-Turno.pdf`](Banco-de-Dados-Turno.pdf) traz o diagrama de relacionamentos que o banco deve seguir, todas as tabelas com campos, tipos e chaves, e as regras de cada uma.
 
 <p align="center">
-  <img src="docs/images/painel.png" alt="Visão geral do painel com o quadro de turnos e a vazão da última hora">
+  <img src="docs/images/painel.png" alt="Visão geral: as execuções da última hora na tampa escura e os indicadores nos compartimentos da caixa">
 </p>
 
 ## O que o Turno faz
@@ -35,38 +35,40 @@
 - **Idempotência:** o cabeçalho `Idempotency-Key` evita tarefas duplicadas quando o cliente repete a requisição.
 - **Cancelamento cooperativo** de tarefas em execução, progresso em porcentagem e resultado gravado em JSON.
 - **Encerramento gracioso:** ao desligar um worker, as tarefas em andamento têm tempo para terminar; as que não terminam voltam para a fila sem contar como tentativa.
-- **Painel em Blazor WebAssembly** com atualização em tempo real por SignalR, tema claro e escuro e layout para celular.
+- **Painel em Blazor WebAssembly** com atualização em tempo real por SignalR, identidade visual "caixa única", tema claro e escuro e layout para celular.
 
 ## Interface
 
-Painel de operação, pensado para ser lido de relance:
+Painel de operação no padrão visual "caixa única", o mesmo do [Bento](https://github.com/ravelroot/Data-Driven-Admin-Panel), pensado para ser lido de relance:
 
-- O **quadro de turnos** mostra cada worker online como uma linha e cada vaga de execução como uma casa. Casas ocupadas trazem o tipo da tarefa, o tempo decorrido e a barra de progresso.
-- Indicadores numa faixa única: na fila, executando agora (sobre a capacidade total), agendadas, sucessos e falhas em 24 h, fila de erros e duração média.
-- Execuções por minuto da última hora em barras empilhadas, sucesso e falha.
-- Fundo cinza bem claro, superfícies brancas e bordas finas. Um único tom de destaque, o verde-pinho `#1F5C4C`, aparece na navegação, nas barras de progresso, na seleção e no foco do teclado.
-- As cores de estado aparecem só nos marcadores; o texto continua em tinta neutra para não cansar.
+- **A mesa:** fundo, menu lateral e cabeçalho no mesmo tom claro, sem bordas. O item ativo do menu vira um compartimento branco.
+- **A caixa:** os blocos de cada página dividem paredes finas de 1 px dentro de uma única caixa de cantos arredondados, em vez de cartões soltos com sombra.
+- **A tampa:** o bloco principal da visão geral é o único escuro: execuções da última hora em número grande, sucessos e falhas com sinal + e −, e as execuções por minuto em barras brancas, com as falhas em destaque.
+- **Quadro de turnos:** cada worker online é uma linha e cada vaga de execução é uma casa, com o tipo da tarefa, o tempo decorrido e a barra de progresso.
+- **Indicadores** numa faixa única: agendadas, sucessos e tentativas com falha em 24 h, fila de erros e duração média. Executando agora (sobre a capacidade total) e na fila ficam ao lado da tampa.
+- **Tipografia:** títulos e números em [Bricolage Grotesque](https://fonts.google.com/specimen/Bricolage+Grotesque) fina e condensada, textos em [Instrument Sans](https://fonts.google.com/specimen/Instrument+Sans) e IDs, cron e JSON em [IBM Plex Mono](https://www.ibm.com/plex/). Sem caixa-alta e sem rótulos em mono. As fontes vêm com o projeto (sem CDN).
+- **Cor só onde informa:** o estado aparece como um ponto colorido ao lado do texto neutro; o resto é preto, branco e cinza.
 - A marca é sempre em preto e branco.
-- Tema escuro com os mesmos tons, ajustados para fundo escuro, e escolha guardada no navegador.
-- Fonte [Red Hat Text](https://github.com/RedHatOfficial/RedHatFont), com Red Hat Mono para IDs, cron e JSON, ambas incluídas no projeto (sem CDN).
+- Tema escuro com os mesmos materiais, ajustados para fundo escuro, e escolha guardada no navegador.
 
 | Cor | Uso |
 |---|---|
-| `#F6F7F7` | Fundo das páginas |
-| `#FFFFFF` | Painéis, tabelas e formulários |
-| `#E2E5E6` | Bordas e divisórias |
-| `#5F666B` | Textos de apoio |
-| `#15181B` | Texto e botões principais |
-| `#1F5C4C` | Destaque, progresso e foco |
+| `#F5F4F4` | Mesa: fundo das páginas, menu lateral e cabeçalho |
+| `#FFFFFF` | Caixa: compartimentos, tabelas e formulários |
+| `#E8E7E6` | Paredes e divisórias |
+| `#BAB7B6` | Elementos desligados e estado cancelado |
+| `#4D4B4B` | Textos de apoio |
+| `#333232` | Tampa no tema escuro |
+| `#000000` | Texto, tampa, botões principais e progresso |
 
 | Estado | Cor |
 |---|---|
-| Executando | `#15181B` |
-| Sucesso | `#1F6B45` |
-| Falha | `#A03A32` |
-| Agendada | `#8A5A12` |
-| Na fila | `#959B9F` |
-| Cancelada | `#C6CACC` |
+| Executando | `#000000` |
+| Sucesso | `#3E6B2A` |
+| Falha | `#9B2F1E` |
+| Agendada | `#7A5A12` |
+| Na fila | `#2B4C5A` |
+| Cancelada | `#BAB7B6` |
 
 | Tela | |
 |---|---|
@@ -380,4 +382,4 @@ A integração contínua ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)
 
 ## Licença
 
-[MIT](LICENSE). Use, copie, altere e distribua à vontade. As fontes Red Hat Text e Red Hat Mono são distribuídas sob a [SIL Open Font License](src/Turno.Dashboard/wwwroot/fonts/OFL-RedHat.txt).
+[MIT](LICENSE). Use, copie, altere e distribua à vontade. As fontes Instrument Sans, Bricolage Grotesque e IBM Plex Mono são distribuídas sob a SIL Open Font License 1.1 ([Instrument Sans](src/Turno.Dashboard/wwwroot/fonts/OFL-InstrumentSans.txt), [Bricolage Grotesque](src/Turno.Dashboard/wwwroot/fonts/OFL-BricolageGrotesque.txt), [IBM Plex Mono](src/Turno.Dashboard/wwwroot/fonts/OFL-IBMPlexMono.txt)).

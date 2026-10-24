@@ -6,8 +6,11 @@
 <PageTitle>Workers | Turno</PageTitle>
 
 <header class="page-head">
-    <h1>Workers</h1>
-    <p class="muted page-note">Instâncias de <code>Turno.Worker</code> registradas. Um worker sem sinal por 30 s é tratado como offline e as tarefas dele voltam para a fila quando o lease expira.</p>
+    <div class="page-titles">
+        <p class="page-kicker">Cluster</p>
+        <h1>Workers</h1>
+        <p class="page-lead">Instâncias de <code>Turno.Worker</code> registradas. Um worker sem sinal por 30 s é tratado como offline e as tarefas dele voltam para a fila quando o lease expira.</p>
+    </div>
 </header>
 
 @if (error is not null)

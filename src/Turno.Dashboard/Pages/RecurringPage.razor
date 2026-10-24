@@ -8,7 +8,11 @@
 <PageTitle>Recorrentes | Turno</PageTitle>
 
 <header class="page-head">
-    <h1>Recorrentes</h1>
+    <div class="page-titles">
+        <p class="page-kicker">Operação</p>
+        <h1>Recorrentes</h1>
+        <p class="page-lead">Agendamentos por expressão cron, com fuso horário e controle de sobreposição.</p>
+    </div>
     <div class="page-actions">
         <button type="button" class="primary" @onclick="ToggleForm"><Icon Name="@(formOpen ? "close" : "plus")" Size="16" />@(formOpen ? "Fechar formulário" : "Novo agendamento")</button>
     </div>

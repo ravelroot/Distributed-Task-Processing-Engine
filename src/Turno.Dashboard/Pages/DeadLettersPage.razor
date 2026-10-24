@@ -7,7 +7,11 @@
 <PageTitle>Fila de erros | Turno</PageTitle>
 
 <header class="page-head">
-    <h1>Fila de erros</h1>
+    <div class="page-titles">
+        <p class="page-kicker">Cluster</p>
+        <h1>Fila de erros</h1>
+        <p class="page-lead">Tarefas que esgotaram as tentativas ou tiveram erro permanente. Cada registro também foi publicado na fila <code class="nowrap">turno-dead-letter</code> do broker.</p>
+    </div>
     <div class="page-actions">
         <div class="segmented" role="radiogroup" aria-label="Filtrar registros">
             <label class="@(pendingOnly ? "on" : null)"><input type="radio" name="filter" checked="@pendingOnly" @onchange="() => SetFilterAsync(true)" />Pendentes</label>
@@ -15,7 +19,6 @@
         </div>
     </div>
 </header>
-<p class="muted page-note">Tarefas que esgotaram as tentativas ou tiveram erro permanente. Cada registro também foi publicado na fila <code class="nowrap">turno-dead-letter</code> do broker.</p>
 
 @if (error is not null)
 {

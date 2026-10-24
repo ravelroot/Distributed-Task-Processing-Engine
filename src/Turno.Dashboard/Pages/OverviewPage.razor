@@ -7,7 +7,11 @@
 <PageTitle>Visão geral | Turno</PageTitle>
 
 <header class="page-head">
-    <h1>Visão geral</h1>
+    <div class="page-titles">
+        <p class="page-kicker">@Kicker</p>
+        <h1>Visão geral</h1>
+        <p class="page-lead">Filas, workers e execuções em tempo real.</p>
+    </div>
     <div class="page-actions">
         <button type="button" class="primary" @onclick="Ui.OpenNewJob"><Icon Name="plus" Size="16" />Nova tarefa</button>
     </div>
@@ -24,15 +28,34 @@
 }
 else
 {
+    <div class="caixa destaque">
+        <section class="tampa" aria-label="Execuções na última hora">
+            <div class="tampa-topo">
+                <h2>Execuções na última hora</h2>
+                <span>últimos 60 min</span>
+            </div>
+            <p class="tampa-valor">@Format.Number(HourSucceeded + HourFailed)</p>
+            <p class="tampa-nota">
+                <span><span class="sinal-alta">+@Format.Number(HourSucceeded)</span> com sucesso</span>
+                <span><span class="sinal-queda">−@Format.Number(HourFailed)</span> com falha</span>
+                <span>@Format.Number(PerMinute) por minuto, em média</span>
+            </p>
+            <ThroughputChart Points="stats.Throughput" />
+        </section>
+        <a class="indicador" href="tarefas?estado=Processing">
+            <span class="indicador-rotulo">Executando agora</span>
+            <span class="indicador-valor">@Format.Number(stats.Counts.Processing)<small>de @stats.CapacityOnline vagas</small></span>
+            <span class="indicador-nota">@CapacityPercent% da capacidade dos workers online</span>
+            <ProgressBar Value="@CapacityPercent" />
+        </a>
+        <a class="indicador" href="tarefas?estado=Enqueued">
+            <span class="indicador-rotulo">Na fila</span>
+            <span class="indicador-valor">@Format.Number(stats.Counts.Enqueued)</span>
+            <span class="indicador-nota">esperando uma vaga livre em @stats.Queues.Count fila(s)</span>
+        </a>
+    </div>
+
     <section class="strip" aria-label="Indicadores">
-        <a class="strip-item" href="tarefas?estado=Enqueued">
-            <span class="strip-value">@Format.Number(stats.Counts.Enqueued)</span>
-            <span class="strip-label">Na fila</span>
-        </a>
-        <a class="strip-item" href="tarefas?estado=Processing">
-            <span class="strip-value">@Format.Number(stats.Counts.Processing)<small> / @stats.CapacityOnline</small></span>
-            <span class="strip-label">Executando agora</span>
-        </a>
         <a class="strip-item" href="tarefas?estado=Scheduled">
             <span class="strip-value">@Format.Number(stats.Counts.Scheduled)</span>
             <span class="strip-label">Agendadas</span>
@@ -69,14 +92,6 @@ else
     <div class="split">
         <section class="panel">
             <div class="panel-head">
-                <h2>Execuções por minuto</h2>
-                <span class="muted small">última hora</span>
-            </div>
-            <ThroughputChart Points="stats.Throughput" />
-        </section>
-
-        <section class="panel">
-            <div class="panel-head">
                 <h2>Filas</h2>
             </div>
             @if (stats.Queues.Count == 0)
@@ -101,36 +116,36 @@ else
                 </table>
             }
         </section>
-    </div>
 
-    <section class="panel">
-        <div class="panel-head">
-            <h2>Falhas recentes</h2>
-            <a href="erros" class="small">Abrir a fila de erros</a>
-        </div>
-        @if (failures.Count == 0)
-        {
-            <p class="muted small">Nenhuma tarefa esgotou as tentativas.</p>
-        }
-        else
-        {
-            <table class="table">
-                <thead><tr><th>Tarefa</th><th>Tipo</th><th>Erro</th><th class="num">Tentativas</th><th>Quando</th></tr></thead>
-                <tbody>
-                    @foreach (var item in failures)
-                    {
-                        <tr>
-                            <td><a class="mono" href="tarefas?id=@item.JobId">@Format.ShortId(item.JobId)</a></td>
-                            <td>@item.Type</td>
-                            <td class="cell-error" title="@item.ErrorMessage">@item.ErrorMessage</td>
-                            <td class="num">@item.Attempts</td>
-                            <td title="@Format.FullDateTime(item.FailedAt)">@Format.Relative(item.FailedAt, now)</td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
-        }
-    </section>
+        <section class="panel">
+            <div class="panel-head">
+                <h2>Falhas recentes</h2>
+                <a href="erros" class="small">Abrir a fila de erros</a>
+            </div>
+            @if (failures.Count == 0)
+            {
+                <p class="muted small">Nenhuma tarefa esgotou as tentativas.</p>
+            }
+            else
+            {
+                <table class="table">
+                    <thead><tr><th>Tarefa</th><th>Tipo</th><th>Erro</th><th class="num">Tentativas</th><th>Quando</th></tr></thead>
+                    <tbody>
+                        @foreach (var item in failures)
+                        {
+                            <tr>
+                                <td><a class="mono" href="tarefas?id=@item.JobId">@Format.ShortId(item.JobId)</a></td>
+                                <td>@item.Type</td>
+                                <td class="cell-error" title="@item.ErrorMessage">@item.ErrorMessage</td>
+                                <td class="num">@item.Attempts</td>
+                                <td title="@Format.FullDateTime(item.FailedAt)">@Format.Relative(item.FailedAt, now)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+    </div>
 }
 
 @code {
@@ -145,6 +160,16 @@ else
     private Timer? fallback;
 
     private IReadOnlyList<WorkerDto> OnlineWorkers => workers.Where(w => w.Status != WorkerStatus.Offline).ToList();
+
+    private int HourSucceeded => stats?.Throughput.Sum(p => p.Succeeded) ?? 0;
+
+    private int HourFailed => stats?.Throughput.Sum(p => p.Failed) ?? 0;
+
+    private int PerMinute => stats is null || stats.Throughput.Count == 0 ? 0 : (HourSucceeded + HourFailed) / stats.Throughput.Count;
+
+    private int CapacityPercent => stats is null || stats.CapacityOnline <= 0 ? 0 : (int)Math.Min(100, Math.Round(stats.Counts.Processing * 100.0 / stats.CapacityOnline));
+
+    private string Kicker => stats is null ? "Turno" : $"{stats.WorkersOnline} worker(s) online · {stats.CapacityOnline} vaga(s) de execução";
 
     protected override async Task OnInitializedAsync()
     {
