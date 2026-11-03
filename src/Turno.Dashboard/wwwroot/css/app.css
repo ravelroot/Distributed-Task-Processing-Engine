@@ -250,7 +250,6 @@ code {
 
 .brand-mark {
     flex: none;
-    border-radius: 6px;
 }
 
 :root[data-theme="dark"] .brand-mark {
